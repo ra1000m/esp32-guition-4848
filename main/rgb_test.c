@@ -7,9 +7,13 @@
 #include "esp_rom_sys.h"
 #include "esp_heap_caps.h"
 #include <stdint.h>
+#include <stdbool.h>
 #include <stddef.h>
 
 static const char *TAG = "ST7701_INIT";
+
+#define LCD_H_RES   480
+#define LCD_V_RES   480
 
 /* Pin mapping (Guition 4848S040) */
 #define PIN_BL      38
@@ -143,6 +147,68 @@ static void run_init_sequence(void) {
     st7701_cmd(0x29); vTaskDelay(pdMS_TO_TICKS(20));
 }
 
+static inline uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b)
+{
+    return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+}
+
+static void fill_screen(uint16_t *fb, uint16_t color)
+{
+    for (int i = 0; i < LCD_H_RES * LCD_V_RES; i++) {
+        fb[i] = color;
+    }
+}
+
+static void draw_color_bars(uint16_t *fb)
+{
+    const uint16_t bars[] = {
+        rgb565(255, 255, 255), // White
+        rgb565(255, 255, 0),   // Yellow
+        rgb565(0, 255, 255),   // Cyan
+        rgb565(0, 255, 0),     // Green
+        rgb565(255, 0, 255),   // Magenta
+        rgb565(255, 0, 0),     // Red
+        rgb565(0, 0, 255),     // Blue
+        rgb565(0, 0, 0),       // Black
+    };
+    const int bar_count = sizeof(bars) / sizeof(bars[0]);
+
+    for (int y = 0; y < LCD_V_RES; y++) {
+        for (int x = 0; x < LCD_H_RES; x++) {
+            int idx = (x * bar_count) / LCD_H_RES;
+            fb[y * LCD_H_RES + x] = bars[idx];
+        }
+    }
+}
+
+static void draw_grid(uint16_t *fb)
+{
+    const int step = 40;
+    const uint16_t bg = rgb565(16, 16, 16);
+    const uint16_t line = rgb565(220, 220, 220);
+    const uint16_t center = rgb565(255, 0, 0);
+
+    for (int y = 0; y < LCD_V_RES; y++) {
+        for (int x = 0; x < LCD_H_RES; x++) {
+            bool is_grid = (x % step == 0) || (y % step == 0);
+            bool is_center = (x == LCD_H_RES / 2) || (y == LCD_V_RES / 2);
+            fb[y * LCD_H_RES + x] = is_center ? center : (is_grid ? line : bg);
+        }
+    }
+}
+
+static void draw_gradients(uint16_t *fb)
+{
+    for (int y = 0; y < LCD_V_RES; y++) {
+        for (int x = 0; x < LCD_H_RES; x++) {
+            uint8_t r = (uint8_t)(x * 255 / (LCD_H_RES - 1));
+            uint8_t g = (uint8_t)(y * 255 / (LCD_V_RES - 1));
+            uint8_t b = (uint8_t)((x + y) * 255 / ((LCD_H_RES - 1) + (LCD_V_RES - 1)));
+            fb[y * LCD_H_RES + x] = rgb565(r, g, b);
+        }
+    }
+}
+
 /* --- Main App --- */
 void app_main(void)
 {
@@ -175,8 +241,8 @@ void app_main(void)
         },
         .timings = {
             .pclk_hz = 12000000,
-            .h_res = 480,
-            .v_res = 480,
+            .h_res = LCD_H_RES,
+            .v_res = LCD_V_RES,
             .hsync_pulse_width = 8,
             .hsync_back_porch = 50,
             .hsync_front_porch = 10,
@@ -198,23 +264,35 @@ void app_main(void)
     uint16_t *fb = NULL;
     ESP_ERROR_CHECK(esp_lcd_rgb_panel_get_fbs(panel, 1, (void **)&fb));
 
-    ESP_LOGI(TAG, "RGB initialized, filling blue screen...");
-
-    // Рисуем синий экран
-    for (int i = 0; i < 480 * 480; i++) {
-        fb[i] = 0x001F; // Blue (RGB565)
-    }
-
-    // Если ты хочешь увидеть градиент (для теста цветов), расскоментируй это:
-    /*
-    for (int y = 0; y < 480; y++) {
-        for (int x = 0; x < 480; x++) {
-            fb[y * 480 + x] = (uint16_t)((x * 31 / 479) << 11 | (y * 63 / 479) << 5 | 15);
-        }
-    }
-    */
+    ESP_LOGI(TAG, "RGB initialized, running LCD screen test...");
 
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        ESP_LOGI(TAG, "Screen test: RED");
+        fill_screen(fb, rgb565(255, 0, 0));
+        vTaskDelay(pdMS_TO_TICKS(1500));
+
+        ESP_LOGI(TAG, "Screen test: GREEN");
+        fill_screen(fb, rgb565(0, 255, 0));
+        vTaskDelay(pdMS_TO_TICKS(1500));
+
+        ESP_LOGI(TAG, "Screen test: BLUE");
+        fill_screen(fb, rgb565(0, 0, 255));
+        vTaskDelay(pdMS_TO_TICKS(1500));
+
+        ESP_LOGI(TAG, "Screen test: WHITE");
+        fill_screen(fb, rgb565(255, 255, 255));
+        vTaskDelay(pdMS_TO_TICKS(1500));
+
+        ESP_LOGI(TAG, "Screen test: COLOR BARS");
+        draw_color_bars(fb);
+        vTaskDelay(pdMS_TO_TICKS(2000));
+
+        ESP_LOGI(TAG, "Screen test: GRID");
+        draw_grid(fb);
+        vTaskDelay(pdMS_TO_TICKS(2000));
+
+        ESP_LOGI(TAG, "Screen test: GRADIENT");
+        draw_gradients(fb);
+        vTaskDelay(pdMS_TO_TICKS(2500));
     }
 }
